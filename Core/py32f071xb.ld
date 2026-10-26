@@ -1,0 +1,275 @@
+/*
+******************************************************************************
+**
+
+**  File        : LinkerScript.ld
+**
+**  Author		: Puya_HC
+**
+**  Abstract    : Linker script for PY32F071xB series
+**                128Kbytes FLASH and 16Kbytes RAM
+**
+**                Set heap size, stack size and stack location according
+**                to application requirements.
+**
+**                Set memory bank area and size if external memory is used.
+**
+**  Target      : Puya PY32
+**
+**  Distribution: The file is distributed “as is,” without any warranty
+**                of any kind.
+**
+*****************************************************************************
+** @attention
+**
+** <h2><center>&copy; COPYRIGHT(c) 2019 Puya Semiconductor</center></h2>
+**
+** Redistribution and use in source and binary forms, with or without modification,
+** are permitted provided that the following conditions are met:
+**   1. Redistributions of source code must retain the above copyright notice,
+**      this list of conditions and the following disclaimer.
+**   2. Redistributions in binary form must reproduce the above copyright notice,
+**      this list of conditions and the following disclaimer in the documentation
+**      and/or other materials provided with the distribution.
+**   3. Neither the name of Puya Semiconductor nor the names of its contributors
+**      may be used to endorse or promote products derived from this software
+**      without specific prior written permission.
+**
+** THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+** AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+** IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+** DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+** FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+** DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+** SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+** CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+** OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+** OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+**
+*****************************************************************************
+*/
+
+/* Entry Point */
+ENTRY(Reset_Handler)
+
+/* Highest address of the user mode stack */
+_estack = ORIGIN(RAM) + LENGTH(RAM);    /* end of RAM */
+/* Generate a link error if heap and stack don't fit into RAM */
+_Min_Heap_Size = 0x200;      /* required amount of heap  */
+_Min_Stack_Size = 0x400; /* required amount of stack */
+
+/* Specify the memory areas */
+MEMORY
+{
+RAM (xrw)      : ORIGIN = 0x20000000, LENGTH = 16K
+FLASH (rx)      : ORIGIN = 0x08002800, LENGTH = 118K
+}
+
+/* Define output sections */
+SECTIONS
+{
+  /* The startup code goes first into FLASH */
+  .isr_vector :
+  {
+    . = ALIGN(4);
+    KEEP(*(.isr_vector)) /* Startup code */
+    . = ALIGN(4);
+  } >FLASH
+
+  /* The program code and other data goes into FLASH */
+  .text :
+  {
+    . = ALIGN(4);
+    *(.text)           /* .text sections (code) */
+    *(.text*)          /* .text* sections (code) */
+    *(.glue_7)         /* glue arm to thumb code */
+    *(.glue_7t)        /* glue thumb to arm code */
+    *(.eh_frame)
+
+    KEEP (*(.init))
+    KEEP (*(.fini))
+
+    . = ALIGN(4);
+    _etext = .;        /* define a global symbols at end of code */
+  } >FLASH
+
+  /* Constant data goes into FLASH */
+  .rodata :
+  {
+    . = ALIGN(4);
+    *(.rodata)         /* .rodata sections (constants, strings, etc.) */
+    *(.rodata*)        /* .rodata* sections (constants, strings, etc.) */
+    . = ALIGN(4);
+  } >FLASH
+
+  .ARM.extab   : { *(.ARM.extab* .gnu.linkonce.armextab.*) } >FLASH
+  .ARM : {
+    __exidx_start = .;
+    *(.ARM.exidx*)
+    __exidx_end = .;
+  } >FLASH
+
+  .preinit_array     :
+  {
+    PROVIDE_HIDDEN (__preinit_array_start = .);
+    KEEP (*(.preinit_array*))
+    PROVIDE_HIDDEN (__preinit_array_end = .);
+  } >FLASH
+  .init_array :
+  {
+    PROVIDE_HIDDEN (__init_array_start = .);
+    KEEP (*(SORT(.init_array.*)))
+    KEEP (*(.init_array*))
+    PROVIDE_HIDDEN (__init_array_end = .);
+  } >FLASH
+  .fini_array :
+  {
+    PROVIDE_HIDDEN (__fini_array_start = .);
+    KEEP (*(SORT(.fini_array.*)))
+    KEEP (*(.fini_array*))
+    PROVIDE_HIDDEN (__fini_array_end = .);
+  } >FLASH
+
+  /* used by the startup to initialize data */
+  _sidata = LOADADDR(.data);
+
+  /* Overlay-app 4 KiB execution workspace. It reuses the PY25Q16 sector cache
+     (py25q16.c places SectorCache in .bss.mb_workspace). The VMA is PINNED with
+     OVERLAY so the prebuilt upstream .app blobs, which are all linked at
+     0x20000280, pass the loader's VMA guard. A bare ". = ..." does not survive
+     the >RAM region allocation, hence OVERLAY (as the upstream linker does). It
+     is placed FIRST in RAM: the resident .data/.noncacheable exceed the 0x280
+     worth of RAM before the anchor, so they follow the workspace instead.
+
+     The multiboot restore stub lives in the SAME 4 KiB window (.mb_ramfunc,
+     see mb_flash.c): it is copied from FLASH into the sector cache right before
+     it erases internal flash, so it must share the workspace's VMA. Its load
+     image is anchored at the current end of the FLASH load cursor (just after
+     .fini_array, i.e. where .data's load image would otherwise start). */
+  OVERLAY (ORIGIN(RAM) + 0x280) : NOCROSSREFS AT (LOADADDR(.fini_array) + SIZEOF(.fini_array))
+  {
+    .mb_ramfunc
+    {
+      . = ALIGN(4);
+      __mb_ramfunc_start = .;
+      KEEP(*(.MBRamFunc))
+      KEEP(*(.MBRamFunc*))
+      . = ALIGN(4);
+      __mb_ramfunc_end = .;
+    }
+
+    .mb_workspace
+    {
+      . = ALIGN(4);
+      __mb_workspace_start = .;
+      KEEP(*(.bss.mb_workspace))
+      KEEP(*(.bss.mb_workspace*))
+      . = ALIGN(4);
+      __mb_workspace_end = .;
+    }
+  } >RAM
+
+  __mb_ramfunc_load_start = LOADADDR(.mb_ramfunc);
+  __mb_ramfunc_size = SIZEOF(.mb_ramfunc);
+  __mb_workspace_size = SIZEOF(.mb_workspace);
+  ASSERT(__mb_workspace_size == 0x1000,
+         "Overlay workspace must be exactly the 4 KiB PY25Q16 sector cache")
+  ASSERT(__mb_workspace_start == ORIGIN(RAM) + 0x280,
+         "Overlay workspace must be linked at 0x20000280")
+  ASSERT(__mb_ramfunc_size <= __mb_workspace_size,
+         "Multiboot RAM stub does not fit in PY25Q16 sector-cache overlay")
+  ASSERT((__mb_ramfunc_size == 0) ||
+         (ADDR(.mb_ramfunc) == ADDR(.mb_workspace)),
+         "Multiboot RAM stub and workspace do not share the same VMA")
+  ASSERT((__mb_ramfunc_size == 0) ||
+         (LOADADDR(.mb_ramfunc) != ADDR(.mb_ramfunc)),
+         "Multiboot RAM stub load and execution addresses must differ")
+  ASSERT((LOADADDR(.mb_ramfunc) + SIZEOF(.mb_ramfunc)) <=
+         (ORIGIN(FLASH) + LENGTH(FLASH)),
+         "FLASH overflowed by multiboot RAM-stub load image")
+
+  /* Initialized data sections goes into RAM, load LMA copy after code.
+     Placed AFTER the overlay workspace (see above). The load address is
+     chained right behind the RAM-stub image: an explicit AT() (rather than
+     AT> FLASH) because the linker does not necessarily advance the FLASH
+     region cursor past an OVERLAY that carries its own AT(). */
+  .data : AT (LOADADDR(.mb_ramfunc) + SIZEOF(.mb_ramfunc))
+  {
+    . = ALIGN(4);
+    _sdata = .;        /* create a global symbol at data start */
+
+    *(.RamFunc)        /* functions that must execute from RAM (e.g. internal */
+    *(.RamFunc*)       /* flash reprogramming); copied to RAM with .data      */
+
+    *(.data)           /* .data sections */
+    *(.data*)          /* .data* sections */
+
+    . = ALIGN(4);
+    _edata = .;        /* define a global symbol at data end */
+  } >RAM
+
+  /* The stub's FLASH load image was anchored above; .data's is chained right
+     behind it by the explicit AT() above, so this only fires if a future edit
+     detaches one of the two. */
+  ASSERT(LOADADDR(.data) >= (LOADADDR(.mb_ramfunc) + SIZEOF(.mb_ramfunc)),
+         "Multiboot RAM-stub load image overlaps .data's load image")
+
+  /* Explicit placement of .noncacheable (CherryUSB) + end-of-FLASH symbol */
+  .noncacheable : AT (LOADADDR(.data) + SIZEOF(.data))
+  {
+    . = ALIGN(4);
+    *(.noncacheable)
+    *(.noncacheable*)
+    . = ALIGN(4);
+  } >RAM
+
+  /* The stub's load image is anchored before .data, which is anchored before
+     .noncacheable, so the highest FLASH byte in use is the end of
+     .noncacheable's load image. */
+  _eflash_used = LOADADDR(.noncacheable) + SIZEOF(.noncacheable);
+  /* The load images above are anchored with explicit AT(), which the linker
+   * does not range-check against the FLASH region, so assert it here. */
+  ASSERT(_eflash_used <= (ORIGIN(FLASH) + LENGTH(FLASH)),
+         "FLASH overflowed by the .data/.noncacheable load images")
+
+  /* Uninitialized data section */
+  . = ALIGN(4);
+  .bss :
+  {
+    /* This is used by the startup in order to initialize the .bss secion */
+    _sbss = .;         /* define a global symbol at bss start */
+    __bss_start__ = _sbss;
+    *(.bss)
+    *(.bss*)
+    *(COMMON)
+
+    . = ALIGN(4);
+    _ebss = .;         /* define a global symbol at bss end */
+    __bss_end__ = _ebss;
+  } >RAM
+
+  /* User_heap_stack section, used to check that there is enough RAM left */
+  ._user_heap_stack :
+  {
+    . = ALIGN(8);
+    PROVIDE ( end = . );
+    PROVIDE ( _end = . );
+    . = . + _Min_Heap_Size;
+    . = . + _Min_Stack_Size;
+    . = ALIGN(8);
+  } >RAM
+
+  
+
+  /* Remove information from the standard libraries */
+  /DISCARD/ :
+  {
+    libc.a ( * )
+    libm.a ( * )
+    libgcc.a ( * )
+  }
+
+  .ARM.attributes 0 : { *(.ARM.attributes) }
+}
+
+
